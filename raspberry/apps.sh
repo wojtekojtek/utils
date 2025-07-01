@@ -21,7 +21,7 @@ show_help() {
 
 uninstall_apps() {
     echo -e "${BLACK}[ INFO ]${NC} Uninstalling apps..."
-    apt remove --purge -y git gh 2>/dev/null || true
+    apt remove --purge -y git gh tmux 2>/dev/null || true
     apt autoremove -y 2>/dev/null || true
     for util in $UTILS; do
         rm -f "/usr/local/bin/$util"
@@ -103,6 +103,13 @@ if ! command -v gh &>/dev/null; then
     install_packages "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_arm64.deb"
 else
     echo -e "${BLACK}[ INFO ]${NC} gh is already installed"
+fi
+
+if ! command -v tmux &>/dev/null; then
+    echo -e "${BLACK}[ INFO ]${NC} Installing tmux..."
+    apt install -y tmux
+else
+    echo -e "${BLACK}[ INFO ]${NC} tmux is already installed"
 fi
 
 for util in $UTILS; do

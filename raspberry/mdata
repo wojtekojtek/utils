@@ -9,5 +9,5 @@ fi
 if mount | grep /dev/mmcblk0p3 > /dev/null; then
   echo "Already mounted"
 else
-  sudo mount -o rw /dev/mmcblk0p3 ~/data
+  sudo mount -o rw /dev/mmcblk0p3 /home/wojtekojtek/data
 fi
