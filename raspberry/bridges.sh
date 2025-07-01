@@ -116,7 +116,7 @@ mdata || {
     exit 1
 }
 
-cd $USERHOME/dev
+cd $USERHOME/data
 mkdir -p bridges
 cd bridges
 if ! [ -e "secrets" ]; then
