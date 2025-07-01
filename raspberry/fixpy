@@ -1,0 +1,5 @@
+#!/bin/bash
+echo "Fixing Python"
+pip freeze --local >/tmp/pipfreeze.txt
+pip install --upgrade --force-reinstall --no-cache-dir `cat /tmp/pipfreeze.txt`
+rm -f /tmp/pipfreeze.txt

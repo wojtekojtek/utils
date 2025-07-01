@@ -1,0 +1,7 @@
+#!/bin/bash
+dir=$(pwd)
+cd ~/dev/bridges
+echo "Fixing NPM"
+npm update
+cd $dir
+

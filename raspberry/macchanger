@@ -1,0 +1,27 @@
+#!/bin/bash
+IFACE="eth0"
+
+if [ "$1" == "" ]; then
+  random_mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+else
+  random_mac=$1
+fi
+
+sudo ip link set $IFACE down
+sudo ip link set $IFACE address "$random_mac"
+sudo ip link set $IFACE up
+
+if command -v dhclient &>/dev/null; then
+  sudo dhclient -r $IFACE
+  sudo dhclient $IFACE
+elif command -v dhcpcd &>/dev/null; then
+  sudo dhcpcd -k $IFACE
+  sudo dhcpcd $IFACE
+elif command -v nmcli &>/dev/null; then
+  sudo nmcli device disconnect $IFACE
+  sudo nmcli device connect $IFACE
+else
+  echo "No DHCP client found to renew IP address. You may need to restart networking manually."
+fi
+
+echo "MAC address for $IFACE changed to: $random_mac"

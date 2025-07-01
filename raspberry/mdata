@@ -1,0 +1,13 @@
+#!/bin/bash
+if ! [ -e "/home/wojtekojtek/data" ]; then
+  mkdir "/home/wojtekojtek/data"
+fi
+if ! [ -e "/dev/mmcblk0p3" ]; then
+  echo "Partition /dev/mmcblk0p3 does not exist huh?"
+  exit 1
+fi
+if mount | grep /dev/mmcblk0p3 > /dev/null; then
+  echo "Already mounted"
+else
+  sudo mount -o rw /dev/mmcblk0p3 ~/data
+fi
