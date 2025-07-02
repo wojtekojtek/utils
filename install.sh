@@ -260,88 +260,75 @@ export PKG_MANAGER
 if [[ -n "$UNINSTALL" ]]; then
     case "$DETECTED_OS" in
         raspberry)
-            case "$UNINSTALL" in
-                hotspot)
-                    echo -e "${BLACK}[ INFO ]${NC} Uninstalling hotspot..."
-                    if [ -f ./hotspot.sh ]; then
+            if [[ -z "$UNINSTALL" || "$UNINSTALL" == "all" ]]; then
+                for script in hotspot.sh ftp.sh apps.sh bridges.sh; do
+                    if [ -f ./$script ]; then
+                        echo -e "${BLACK}[ INFO ]${NC} Uninstalling ${script%.sh}..."
                         if [[ "$QUIET" == "true" ]]; then
-                            ./hotspot.sh -u -q
+                            ./$script -u -q
                         else
-                            ./hotspot.sh -u
+                            ./$script -u
                         fi
-                    else
-                        echo -e "${RED}[ ERROR ]${NC} hotspot.sh not found"
-                        exit 1
                     fi
-                    ;;
-                ftp)
-                    echo -e "${BLACK}[ INFO ]${NC} Uninstalling FTP..."
-                    if [ -f ./ftp.sh ]; then
-                        if [[ "$QUIET" == "true" ]]; then
-                            ./ftp.sh -u -q
+                done
+            else
+                case "$UNINSTALL" in
+                    hotspot|ftp|apps|bridge)
+                        script="${UNINSTALL}.sh"
+                        echo -e "${BLACK}[ INFO ]${NC} Uninstalling $UNINSTALL..."
+                        if [ -f ./$script ]; then
+                            if [[ "$QUIET" == "true" ]]; then
+                                ./$script -u -q
+                            else
+                                ./$script -u
+                            fi
                         else
-                            ./ftp.sh -u
+                            echo -e "${RED}[ ERROR ]${NC} $script not found"
+                            exit 1
                         fi
-                    else
-                        echo -e "${RED}[ ERROR ]${NC} ftp.sh not found"
+                        ;;
+                    *)
+                        echo -e "${RED}[ ERROR ]${NC} Invalid uninstall target: $UNINSTALL"
                         exit 1
-                    fi
-                    ;;
-                apps)
-                    echo -e "${BLACK}[ INFO ]${NC} Uninstalling apps..."
-                    if [ -f ./apps.sh ]; then
-                        if [[ "$QUIET" == "true" ]]; then
-                            ./apps.sh -u -q
-                        else
-                            ./apps.sh -u
-                        fi
-                    else
-                        echo -e "${RED}[ ERROR ]${NC} apps.sh not found"
-                        exit 1
-                    fi
-                    ;;
-                bridge)
-                    echo -e "${BLACK}[ INFO ]${NC} Uninstalling bridges..."
-                    if [ -f ./bridges.sh ]; then
-                        if [[ "$QUIET" == "true" ]]; then
-                            ./bridges.sh -u -q
-                        else
-                            ./bridges.sh -u
-                        fi
-                    else
-                        echo -e "${RED}[ ERROR ]${NC} bridges.sh not found"
-                        exit 1
-                    fi
-                    ;;
-                *)
-                    echo -e "${RED}[ ERROR ]${NC} Invalid uninstall target: $UNINSTALL"
-                    exit 1
-                    ;;
-            esac
+                        ;;
+                esac
+            fi
             ;;
         ubuntu|fedora)
-            case "$UNINSTALL" in
-                apps)
+            if [[ -z "$UNINSTALL" || "$UNINSTALL" == "all" ]]; then
+                if [ -f ./apps.sh ]; then
                     echo -e "${BLACK}[ INFO ]${NC} Uninstalling apps..."
-                    if [ -f ./apps.sh ]; then
-                        if [[ "$QUIET" == "true" ]]; then
-                            ./apps.sh -u -q
-                        else
-                            ./apps.sh -u
-                        fi
+                    if [[ "$QUIET" == "true" ]]; then
+                        ./apps.sh -u -q
                     else
-                        echo -e "${RED}[ ERROR ]${NC} apps.sh not found"
-                        exit 1
+                        ./apps.sh -u
                     fi
-                    ;;
-                *)
-                    echo -e "${YELLOW}[ WARN ]${NC} Target '$UNINSTALL' not available on $DETECTED_OS"
-                    ;;
-            esac
+                fi
+            else
+                case "$UNINSTALL" in
+                    apps)
+                        if [ -f ./apps.sh ]; then
+                            echo -e "${BLACK}[ INFO ]${NC} Uninstalling apps..."
+                            if [[ "$QUIET" == "true" ]]; then
+                                ./apps.sh -u -q
+                            else
+                                ./apps.sh -u
+                            fi
+                        else
+                            echo -e "${RED}[ ERROR ]${NC} apps.sh not found"
+                            exit 1
+                        fi
+                        ;;
+                    *)
+                        echo -e "${YELLOW}[ WARN ]${NC} Target '$UNINSTALL' not available on $DETECTED_OS"
+                        ;;
+                esac
+            fi
             ;;
     esac
     exit 0
 fi
+
 
 case "$DETECTED_OS" in
     raspberry)
