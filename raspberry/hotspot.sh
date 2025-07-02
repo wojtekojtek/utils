@@ -1,5 +1,5 @@
 #!/bin/bash
-if [[ -z "$RED" || -z "$GREEN" || -z "$YELLOW" || -z "$BLACK" || -z "$CYAN" || -z "$NC" ]]; then
+if [[ -z "$RED" || -z "$GREEN" || -z "$YELLOW" || -z "$BLACK" || -z "$CYAN" || -z "$NC" || -z "$USERHOME" || -z "$USERNAME" ]]; then
     echo "Not running from install.sh. Please run install.sh."
     exit 1
 fi
@@ -11,72 +11,46 @@ show_help() {
     echo ""
     echo "Options:"
     echo "  -q, --quiet      Suppress output messages"
-    echo "  -u, --uninstall  Uninstall hotspot configuration"
-    echo "  -s, --status     Check if hotspot is configured (exit 0 if yes, 1 if no)"
+    echo "  -u, --uninstall  Uninstall hotspot setup"
+    echo "  -s, --status     Check if hotspot is installed"
     echo "  -h, --help       Show this help message"
     echo ""
 }
 
-check_status() {
-    local configured=true
-    if [[ ! -f /etc/hostapd/hostapd.conf ]] || ! grep -q "ssid=wojtekojtek" /etc/hostapd/hostapd.conf; then
-        configured=false
-    fi
-    if [[ ! -f /etc/dnsmasq.conf ]] || ! grep -q "interface=wlan0" /etc/dnsmasq.conf; then
-        configured=false
-    fi
-    if [[ ! -f /etc/dhcpcd.conf ]] || ! grep -q "static ip_address=192.168.4.1/24" /etc/dhcpcd.conf; then
-        configured=false
-    fi
-    if [[ ! -f /usr/local/bin/hotspot ]]; then
-        configured=false
-    fi
-    if [[ "$configured" == "true" ]]; then
-        exit 0
-    else
-        exit 1
-    fi
-}
-
 uninstall_hotspot() {
-    echo -e "${BLACK}[ INFO ]${NC} Stopping hotspot services..."
+    chattr -i /etc/dhcpcd.conf 2>/dev/null || true
+    chattr -i /etc/dnsmasq.conf 2>/dev/null || true
     systemctl stop hostapd dnsmasq 2>/dev/null || true
     systemctl disable hostapd dnsmasq 2>/dev/null || true
     killall hostapd dnsmasq 2>/dev/null || true
-
-    echo -e "${BLACK}[ INFO ]${NC} Restoring original configurations..."
-    [[ -f /etc/dhcpcd.conf.backup ]] && mv /etc/dhcpcd.conf.backup /etc/dhcpcd.conf
-    [[ -f /etc/dnsmasq.conf.backup ]] && mv /etc/dnsmasq.conf.backup /etc/dnsmasq.conf
-
-    echo -e "${BLACK}[ INFO ]${NC} Removing hotspot files..."
     rm -f /etc/hostapd/hostapd.conf
     rm -f /etc/default/hostapd
     rm -f /etc/sysctl.d/99-ip-forward.conf
     rm -f /etc/iptables/rules.v4
-    rm -f /etc/hotspot_ip.conf
-    rm -f /usr/local/bin/hotspot
-
-    echo -e "${BLACK}[ INFO ]${NC} Removing installed packages..."
-    apt remove --purge -y hostapd dnsmasq iptables-persistent 2>/dev/null || true
+    rm -f /etc/dnsmasq.conf
+    rm -f /etc/dhcpcd.conf
+    apt remove --purge -y hostapd dnsmasq iptables-persistent rfkill 2>/dev/null || true
     apt autoremove -y 2>/dev/null || true
-
-    echo -e "${BLACK}[ INFO ]${NC} Clearing firewall rules..."
     iptables -F
     iptables -t nat -F
     echo 0 > /proc/sys/net/ipv4/ip_forward
-
-    echo -e "${BLACK}[ INFO ]${NC} Resetting WiFi interface..."
     ip addr flush dev wlan0 2>/dev/null || true
     ip link set wlan0 down 2>/dev/null || true
-
-    echo -e "${BLACK}[ INFO ]${NC} Restarting network services..."
     systemctl daemon-reload
-    systemctl restart dhcpcd 2>/dev/null || true
-    systemctl enable NetworkManager 2>/dev/null || true
-    systemctl start NetworkManager 2>/dev/null || true
-
     echo -e "${GREEN}[  OK  ]${NC} Hotspot uninstalled successfully"
-    echo -e "${BLACK}[ INFO ]${NC} You may need to reboot to fully restore WiFi functionality"
+}
+
+check_status() {
+    if ! command -v hostapd &>/dev/null; then exit 1; fi
+    if ! command -v dnsmasq &>/dev/null; then exit 1; fi
+    if ! command -v rfkill &>/dev/null; then exit 1; fi
+    if ! [ -f /etc/dhcpcd.conf ]; then exit 1; fi
+    if ! [ -f /etc/dnsmasq.conf ]; then exit 1; fi
+    if ! [ -f /etc/hostapd/hostapd.conf ]; then exit 1; fi
+    if ! grep -q "static ip_address=192.168.4.1/24" /etc/dhcpcd.conf; then exit 1; fi
+    if ! grep -q "dhcp-range=192.168.4.2,192.168.4.20" /etc/dnsmasq.conf; then exit 1; fi
+    if ! grep -q "ssid=wojtekojtek" /etc/hostapd/hostapd.conf; then exit 1; fi
+    exit 0
 }
 
 while [[ $# -gt 0 ]]; do
@@ -105,192 +79,106 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-trap 'echo -e "${RED}[ ERROR ]${NC} Command failed: $BASH_COMMAND"; echo "FAILED: $BASH_COMMAND" >> $USERHOME/info.log; exit 1' ERR
+trap 'echo -e "${RED}[ ERROR ]${NC} Command failed: $BASH_COMMAND"; exit 1' ERR
 set -e
 
-[[ $EUID -ne 0 ]] && { echo -e "${YELLOW}[ WARN ]${NC} Need sudo..."; sudo -E "$0" $ARGS; exit $?; }
+[[ $EUID -ne 0 ]] && { echo -e "${YELLOW}[ WARN ]${NC} Need sudo..."; sudo "$0" "$@"; exit $?; }
 
-echo -e "${BLACK}[ INFO ]${NC} Copying hotspot to /usr/local/bin/hotspot"
-SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-cp "$SCRIPT_DIR/hotspot" /usr/local/bin/hotspot
-chmod +x /usr/local/bin/hotspot
+systemctl stop NetworkManager 2>/dev/null || true
+systemctl disable NetworkManager 2>/dev/null || true
+systemctl mask NetworkManager 2>/dev/null || true
+systemctl stop systemd-networkd 2>/dev/null || true
+systemctl disable systemd-networkd 2>/dev/null || true
+systemctl mask systemd-networkd 2>/dev/null || true
+chattr -i /etc/dhcpcd.conf 2>/dev/null || true
 
-if ! dpkg -l | grep -q "^ii  hostapd "; then
-    echo -e "${BLACK}[ INFO ]${NC} Installing hostapd"
-    apt update
-    rm -rf /etc/default/hostapd
-    apt install -y hostapd
-fi
-if ! dpkg -l | grep -q "^ii  dnsmasq "; then
-    echo -e "${BLACK}[ INFO ]${NC} Installing dnsmasq"
-    apt install -y dnsmasq
-fi
-if ! dpkg -l | grep -q "^ii  iptables-persistent "; then
-    echo -e "${BLACK}[ INFO ]${NC} Installing iptables-persistent"
-    DEBIAN_FRONTEND=noninteractive apt install -y iptables-persistent
-fi
+apt update
+apt install -y hostapd dnsmasq iptables-persistent rfkill
 
-SSID="wojtekojtek"
-PASSWORD="wojtekojtek"
-CHANNEL="7"
-INTERFACE="wlan0"
-COUNTRY="PL"
-HOTSPOT_IP="192.168.4.1"
-DHCP_START="192.168.4.2"
-DHCP_END="192.168.4.20"
+cat > /etc/dhcpcd.conf <<EOF
+interface eth0
+static ip_address=192.168.1.105/24
+static routers=192.168.1.1
+static domain_name_servers=1.1.1.1
 
-if ! ip link show "$INTERFACE" &>/dev/null; then
-    echo -e "${RED}[ ERROR ]${NC} WiFi interface $INTERFACE not found!"
-    echo "FAILED: WiFi interface $INTERFACE not found!" >> $USERHOME/info.log
-    exit 1
-fi
-
-INTERNET_IF=$(ip route | grep default | head -1 | awk '{print $5}')
-if [[ -z "$INTERNET_IF" ]]; then
-    echo -e "${RED}[ ERROR ]${NC} No internet connection found"
-    echo "FAILED: No internet connection found" >> $USERHOME/info.log
-    exit 1
-fi
-
-echo -e "${BLACK}[ INFO ]${NC} Setting up hotspot on $HOTSPOT_IP via $INTERNET_IF"
-
-SERVICES_TO_STOP=""
-systemctl is-active --quiet NetworkManager 2>/dev/null && SERVICES_TO_STOP="$SERVICES_TO_STOP NetworkManager"
-systemctl is-active --quiet connman 2>/dev/null && SERVICES_TO_STOP="$SERVICES_TO_STOP connman"
-systemctl is-active --quiet systemd-resolved 2>/dev/null && SERVICES_TO_STOP="$SERVICES_TO_STOP systemd-resolved"
-systemctl is-active --quiet wpa_supplicant 2>/dev/null && SERVICES_TO_STOP="$SERVICES_TO_STOP wpa_supplicant"
-
-if [[ -n "$SERVICES_TO_STOP" ]]; then
-    echo -e "${BLACK}[ INFO ]${NC} Stopping conflicting services"
-    systemctl stop $SERVICES_TO_STOP 2>/dev/null || true
-    systemctl disable $SERVICES_TO_STOP 2>/dev/null || true
-fi
-
-ifconfig "$INTERFACE" down
-pkill wpa_supplicant || true
-
-CURRENT_IP=$(ip addr show "$INTERFACE" | grep 'inet ' | awk '{print $2}' | head -1)
-if [[ "$CURRENT_IP" != "$HOTSPOT_IP/24" ]]; then
-    echo -e "${BLACK}[ INFO ]${NC} Configuring WiFi interface"
-    rfkill unblock wifi
-    rfkill unblock all
-    ip addr flush dev "$INTERFACE"
-    ip link set "$INTERFACE" down
-    sleep 3
-    ip link set "$INTERFACE" up
-    ip addr add "$HOTSPOT_IP/24" dev "$INTERFACE"
-fi
-
-if ! grep -q "interface $INTERFACE" /etc/dhcpcd.conf || ! grep -q "static ip_address=$HOTSPOT_IP/24" /etc/dhcpcd.conf; then
-    echo -e "${BLACK}[ INFO ]${NC} Configuring dhcpcd"
-    cp /etc/dhcpcd.conf /etc/dhcpcd.conf.backup 2>/dev/null || true
-    cat > /etc/dhcpcd.conf << EOF
-interface $INTERFACE
-static ip_address=$HOTSPOT_IP/24
+interface wlan0
+static ip_address=192.168.4.1/24
 nohook wpa_supplicant
 EOF
+
+chattr +i /etc/dhcpcd.conf || true
+
+if [ -f /etc/network/interfaces ]; then
+    sed -i '/iface eth0/d;/iface wlan0/d;/auto eth0/d;/auto wlan0/d' /etc/network/interfaces
 fi
 
-if ! grep -q "interface=$INTERFACE" /etc/dnsmasq.conf || ! grep -q "dhcp-range=$DHCP_START,$DHCP_END" /etc/dnsmasq.conf; then
-    echo -e "${BLACK}[ INFO ]${NC} Configuring dnsmasq"
-    cp /etc/dnsmasq.conf /etc/dnsmasq.conf.backup 2>/dev/null || true
-    cat > /etc/dnsmasq.conf << EOF
-interface=$INTERFACE
+rfkill unblock wifi
+rfkill unblock all
+ip addr flush dev wlan0 || true
+ip link set wlan0 down || true
+sleep 2
+ip link set wlan0 up || true
+ip addr add 192.168.4.1/24 dev wlan0 || true
+sleep 3
+
+systemctl restart dhcpcd
+sleep 2
+
+cat > /etc/dnsmasq.conf <<EOF
+interface=wlan0
 bind-interfaces
 dhcp-authoritative
-dhcp-range=$DHCP_START,$DHCP_END,255.255.255.0,24h
-dhcp-option=3,$HOTSPOT_IP
-dhcp-option=6,8.8.8.8,8.8.4.4
-server=8.8.8.8
-server=8.8.4.4
+dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
+dhcp-option=3,192.168.4.1
+dhcp-option=6,1.1.1.1
+server=1.1.1.1
+server=1.0.0.1
 domain=wlan
-address=/gw.wlan/$HOTSPOT_IP
+address=/gw.wlan/192.168.4.1
 dhcp-leasefile=/var/lib/misc/dnsmasq.leases
 log-dhcp
 log-facility=/var/log/dnsmasq.log
 EOF
+
+if [ -d /etc/dnsmasq.d ]; then
+    mkdir -p /tmp/dnsmasq-d-backup
+    mv /etc/dnsmasq.d/* /tmp/dnsmasq-d-backup/ 2>/dev/null || true
 fi
+chattr +i /etc/dnsmasq.conf || true
 
-mkdir -p /etc/hostapd
+systemctl restart dnsmasq
 
-if ! [[ -f /etc/hostapd/hostapd.conf ]] || ! grep -q "ssid=$SSID" /etc/hostapd/hostapd.conf || ! grep -q "interface=$INTERFACE" /etc/hostapd/hostapd.conf; then
-    echo -e "${BLACK}[ INFO ]${NC} Configuring hostapd"
-    cat > /etc/hostapd/hostapd.conf << EOF
-country_code=$COUNTRY
-interface=$INTERFACE
+cat > /etc/hostapd/hostapd.conf <<EOF
+interface=wlan0
 driver=nl80211
-ssid=$SSID
+ssid=wojtekojtek
 hw_mode=g
-channel=$CHANNEL
-wmm_enabled=0
-macaddr_acl=0
-auth_algs=1
-ignore_broadcast_ssid=0
+channel=1
 wpa=2
-wpa_passphrase=$PASSWORD
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
-rsn_pairwise=CCMP
+wpa_passphrase=wojtekojtek
+ignore_broadcast_ssid=1
 EOF
-    echo 'DAEMON_CONF="/etc/hostapd/hostapd.conf"' > /etc/default/hostapd
-fi
+echo 'DAEMON_CONF="/etc/hostapd/hostapd.conf"' > /etc/default/hostapd
 
-if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]]; then
-    echo -e "${BLACK}[ INFO ]${NC} Enabling IP forwarding"
-    echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-ip-forward.conf
-    echo 1 > /proc/sys/net/ipv4/ip_forward
-fi
-
-if ! iptables -t nat -L POSTROUTING -n | grep -q "MASQUERADE.*$INTERNET_IF"; then
-    echo -e "${BLACK}[ INFO ]${NC} Configuring firewall"
-    iptables -F
-    iptables -t nat -F
-    iptables -t nat -A POSTROUTING -o "$INTERNET_IF" -j MASQUERADE
-    iptables -A FORWARD -i "$INTERNET_IF" -o "$INTERFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT
-    iptables -A FORWARD -i "$INTERFACE" -o "$INTERNET_IF" -j ACCEPT
-    iptables -A INPUT -i "$INTERFACE" -j ACCEPT
-    mkdir -p /etc/iptables
-    iptables-save > /etc/iptables/rules.v4
-fi
-
-if ! command -v dnsmasq &>/dev/null; then
-    echo -e "${RED}[ ERROR ]${NC} dnsmasq command not found"
-    exit 1
-fi
-if ! command -v hostapd &>/dev/null; then
-    echo -e "${RED}[ ERROR ]${NC} hostapd command not found"
-    exit 1
-fi
-
-systemctl stop dnsmasq hostapd
-systemctl disable dnsmasq hostapd
-systemctl daemon-reload
 systemctl unmask hostapd
-systemctl enable --now hostapd dnsmasq
+systemctl enable hostapd
+systemctl restart hostapd
 
-SERVICES_TO_ENABLE=""
-systemctl is-enabled --quiet hostapd 2>/dev/null || SERVICES_TO_ENABLE="$SERVICES_TO_ENABLE hostapd"
-systemctl is-enabled --quiet dnsmasq 2>/dev/null || SERVICES_TO_ENABLE="$SERVICES_TO_ENABLE dnsmasq"
-systemctl is-enabled --quiet netfilter-persistent 2>/dev/null || SERVICES_TO_ENABLE="$SERVICES_TO_ENABLE netfilter-persistent"
+echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-ip-forward.conf
+sysctl -w net.ipv4.ip_forward=1
 
-if echo "$SERVICES_TO_ENABLE" | grep -qw hostapd; then
-    echo -e "${BLACK}[ INFO ]${NC} Unmasking and enabling hostapd"
-    systemctl unmask hostapd
-    systemctl enable hostapd
-fi
-if [[ -n "$SERVICES_TO_ENABLE" ]]; then
-    echo -e "${BLACK}[ INFO ]${NC} Enabling services"
-    for svc in $SERVICES_TO_ENABLE; do
-        [[ "$svc" != "hostapd" ]] && systemctl enable "$svc"
-    done
-fi
+iptables -F
+iptables -t nat -F
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT
+iptables -A INPUT -i wlan0 -j ACCEPT
+mkdir -p /etc/iptables
+iptables-save > /etc/iptables/rules.v4
 
-echo -e "${GREEN}[  OK  ]${NC} Hotspot ready!"
-{
-    echo -e "${YELLOW}SSID:${NC} $SSID"
-    echo -e "${YELLOW}Password:${NC} $PASSWORD"
-    echo -e "${YELLOW}Channel:${NC} $CHANNEL"
-    echo -e "${YELLOW}Hotspot IP:${NC} $HOTSPOT_IP"
-    echo -e "${YELLOW}Client IPs:${NC} $DHCP_START - $DHCP_END"
-    echo -e "${YELLOW}Internet:${NC} via $INTERNET_IF"
-} >> $USERHOME/info.log
+mount | grep 'on / ' | grep -q 'ro,' && echo -e "${RED}[WARN] Root filesystem is read-only! Changes will not persist after reboot.${NC}"
+mount | grep 'overlay' | grep 'on / ' && echo -e "${YELLOW}[WARN] Root filesystem is an overlay. Changes may not persist.${NC}"
+grep -r 'dhcpcd.conf' /etc/rc.local /etc/init.d/ /etc/systemd/system/ /etc/crontab 2>/dev/null | grep -v 'No such file' && echo -e "${YELLOW}[WARN] Found references to dhcpcd.conf in startup scripts. Review above lines!${NC}"
+chattr +i /etc/dhcpcd.conf 2>/dev/null || true
+
+echo -e "${GREEN}[  OK  ]${NC} Hotspot setup complete!"

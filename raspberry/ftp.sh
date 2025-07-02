@@ -15,7 +15,6 @@ show_help() {
     echo "  -s, --status     Check if FTP server is configured (exit 0 if yes, 1 if no)"
     echo "  -h, --help       Show this help message"
     echo ""
-    echo "This script installs and configures vsftpd FTP server."
 }
 
 check_status() {

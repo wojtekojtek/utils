@@ -32,7 +32,7 @@ check_status() {
         configured=false
     fi
     
-    if [[ ! -d $USERHOME/data/bridges/inline ]]; then
+    if [[ ! -d $USERHOME/data/bots/inline ]]; then
         configured=false
     fi
     
@@ -136,10 +136,14 @@ wget https://github.com/TediCross/TediCross/archive/refs/tags/v0.12.4.zip
 mkdir -p it
 cd it
 unzip ../v0.12.4.zip
+mv TediCross-0.12.4/* .
+rm -rf TediCross-0.12.4
 cd ..
 mkdir -p tgdc
 cd tgdc
 unzip ../v0.12.4.zip
+mv TediCross-0.12.4/* .
+rm -rf TediCross-0.12.4
 cd ..
 sudo chown -R "$USERNAME":"$USERNAME" it
 sudo chmod -R u+rwx it
@@ -163,11 +167,12 @@ pip3 install -r $USERHOME/data/bots/inline/requirements.txt || {
     exit 1
 }
 
-if ! command -v npm &>/dev/null; then
-    echo -e "${BLACK}[ INFO ]${NC} Installing npm..."
-    apt install -y npm
+if ! command -v nodejs &>/dev/null; then
+    echo -e "${BLACK}[ INFO ]${NC} Installing nodejs..."
+    curl -sL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    sudo apt-get install -y nodejs
 else
-    echo -e "${BLACK}[ INFO ]${NC} npm is already installed"
+    echo -e "${BLACK}[ INFO ]${NC} nodejs is already installed"
 fi
 echo -e "${BLACK}[ INFO ]${NC} Cleaning up npm modules..."
 rm -rf cd $USERHOME/data/bridges/tgdc/node_modules
@@ -189,7 +194,7 @@ After=network.target
 Type=oneshot
 RemainAfterExit=yes
 User=$USERNAME
-ExecStart=/bin/bash -c 'tmux new-session -s "it" -d "cd $USERHOME/data/bridges/it && npm start"; tmux new-session -s "tgdc" -d "cd $USERHOME/data/bridges/tgdc && npm start"; tmux new-session -s "inline" -d "cd $USERHOME/data/bots/inline && python3 main.py"'
+ExecStart=/bin/bash -c 'mdata; tmux new-session -s "it" -d "cd $USERHOME/data/bridges/it && npm start"; tmux new-session -s "tgdc" -d "cd $USERHOME/data/bridges/tgdc && npm start"; tmux new-session -s "inline" -d "cd $USERHOME/data/bots/inline && python3 main.py"'
 ExecStop=/bin/bash -c 'tmux send-keys -t it C-c; tmux send-keys -t tgdc C-c; tmux send-keys -t inline C-c; sleep 10; tmux kill-server'
 
 [Install]
@@ -198,5 +203,6 @@ EOF
 
 systemctl daemon-reload
 systemctl enable bridges.service
+systemctl start bridges.service
 
 echo -e "${GREEN}[  OK  ]${NC} Bridge installation complete!"

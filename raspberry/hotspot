@@ -1,16 +1,20 @@
 #!/bin/bash
-if [[ -z "$RED" || -z "$GREEN" || -z "$YELLOW" || -z "$BLACK" || -z "$CYAN" || -z "$NC" ]]; then
-    RED='\033[1;31m'
-    GREEN='\033[1;32m'
-    YELLOW='\033[1;33m'
-    BLACK='\033[1;30m'
-    CYAN='\033[1;36m'
-    NC='\033[0m'
-fi
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLACK='\033[1;30m'
+CYAN='\033[1;36m'
+NC='\033[0m'
 
 QUIET=false
 ACTION=""
 EFFICIENCY=""
+
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${YELLOW}[ WARN ]${NC} Need sudo..."
+    exec sudo -E "$0" "$@"
+fi
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -47,13 +51,13 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  -o, --toggle     Toggle hotspot state"
-            echo "  --on             Turn hotspot on"
-            echo "  --off            Turn hotspot off"
-            echo "  -e [fast/slow]   Set efficiency mode or toggle"
-            echo "  --efficiency=MODE Set efficiency mode (fast/slow)"
-            echo "  -q, --quiet      Suppress output messages"
-            echo "  -h, --help       Show this help message"
+            echo "  -o, --toggle        Toggle hotspot state"
+            echo "  --on                Turn hotspot on"
+            echo "  --off               Turn hotspot off"
+            echo "  -e [fast/slow]      Set efficiency but shorter"
+            echo "  --efficiency=MODE   Set efficiency mode (fast/slow)"
+            echo "  -q, --quiet         Suppress output messages"
+            echo "  -h, --help          Show this help message"
             echo ""
             exit 0
             ;;
@@ -69,25 +73,23 @@ if [[ -z "$ACTION" && -z "$EFFICIENCY" ]]; then
     exit 1
 fi
 
-[[ $EUID -ne 0 ]] && { echo -e "${YELLOW}[ WARN ]${NC} Need sudo..."; sudo -E "$0" "$@"; exit $?; }
-
-if ! command -v tmux &>/dev/null; then
-    echo -e "${RED}[ ERROR ]${NC} tmux is required but not installed. Installing..."
-    apt update && apt install -y tmux
+HOSTAPD_CONF="/etc/hostapd/hostapd.conf"
+if [[ ! -f "$HOSTAPD_CONF" ]]; then
+    echo -e "${RED}[ ERROR ]${NC} $HOSTAPD_CONF not found"
+    exit 1
 fi
-
-if [[ ! -f ./hotspot.sh ]]; then
-    echo -e "${RED}[ ERROR ]${NC} hotspot.sh not found in current directory"
+if [[ ! -w "$HOSTAPD_CONF" ]]; then
+    echo -e "${RED}[ ERROR ]${NC} $HOSTAPD_CONF is not writable"
     exit 1
 fi
 
-if pgrep hostapd &>/dev/null && pgrep dnsmasq &>/dev/null; then
+WLAN_IFACE="wlan0"
+CURRENT_STATE="OFF"
+if systemctl is-active --quiet hostapd && systemctl is-active --quiet dnsmasq; then
     CURRENT_STATE="ON"
-else
-    CURRENT_STATE="OFF"
 fi
 
-if [[ -f /etc/hostapd/hostapd.conf ]] && grep -q "ht_capab=" /etc/hostapd/hostapd.conf; then
+if grep -q "^ieee80211n=1" "$HOSTAPD_CONF"; then
     CURRENT_EFFICIENCY="fast"
 else
     CURRENT_EFFICIENCY="slow"
@@ -95,6 +97,8 @@ fi
 
 echo -e "${BLACK}[ INFO ]${NC} Current hotspot state: $CURRENT_STATE"
 echo -e "${BLACK}[ INFO ]${NC} Current efficiency mode: $CURRENT_EFFICIENCY"
+
+EFFICIENCY_CHANGED=false
 
 if [[ -n "$EFFICIENCY" ]]; then
     if [[ "$EFFICIENCY" == "toggle" ]]; then
@@ -104,91 +108,71 @@ if [[ -n "$EFFICIENCY" ]]; then
             EFFICIENCY="fast"
         fi
     fi
-    
+
     if [[ "$EFFICIENCY" != "fast" && "$EFFICIENCY" != "slow" ]]; then
         echo -e "${RED}[ ERROR ]${NC} Invalid efficiency mode: $EFFICIENCY (use fast/slow)"
         exit 1
     fi
-    
+
     echo -e "${BLACK}[ INFO ]${NC} Setting efficiency mode to: $EFFICIENCY"
-    
+
+    sed -i '/^wmm_enabled=/d;/^ieee80211n=/d;/^ht_capab=/d' "$HOSTAPD_CONF"
+
     if [[ "$EFFICIENCY" == "fast" ]]; then
-        sed -i 's/CHANNEL="[0-9]*"/CHANNEL="1"/' ./hotspot.sh
-        sed -i '/wmm_enabled=0/c\wmm_enabled=1' ./hotspot.sh
-        sed -i '/rsn_pairwise=CCMP/a\ieee80211n=1\nieee80211d=1\nieee80211h=0\nht_capab=[HT40+][SHORT-GI-20][SHORT-GI-40][DSSS_CCK-40]\nbeacon_int=100\ndtim_period=2\nmax_num_sta=10\nrts_threshold=2347\nfragm_threshold=2346' ./hotspot.sh
+        sed -i '/^channel=/c\channel=1' "$HOSTAPD_CONF"
+        echo "wmm_enabled=1" >> "$HOSTAPD_CONF"
+        echo "ieee80211n=1" >> "$HOSTAPD_CONF"
+        echo "ht_capab=[SHORT-GI-20]" >> "$HOSTAPD_CONF"
+        iw dev "$WLAN_IFACE" set txpower fixed 2000 2>/dev/null
+        [[ $? -eq 0 ]] && echo -e "${BLACK}[ INFO ]${NC} TX power set to 20 dBm"
     else
-        sed -i 's/CHANNEL="[0-9]*"/CHANNEL="7"/' ./hotspot.sh
-        sed -i '/wmm_enabled=1/c\wmm_enabled=0' ./hotspot.sh
-        sed -i '/ieee80211n=1/d; /ieee80211d=1/d; /ieee80211h=0/d; /ht_capab=/d; /beacon_int=/d; /dtim_period=/d; /max_num_sta=/d; /rts_threshold=/d; /fragm_threshold=/d' ./hotspot.sh
+        sed -i '/^channel=/c\channel=7' "$HOSTAPD_CONF"
+        echo "wmm_enabled=0" >> "$HOSTAPD_CONF"
+        iw dev "$WLAN_IFACE" set txpower fixed 1000 2>/dev/null
+        [[ $? -eq 0 ]] && echo -e "${BLACK}[ INFO ]${NC} TX power set to 10 dBm"
     fi
-    
+    EFFICIENCY_CHANGED=true
+
     if [[ "$CURRENT_STATE" == "ON" ]]; then
-        echo -e "${BLACK}[ INFO ]${NC} Restarting hotspot with new efficiency settings"
-        if [[ "$QUIET" == "true" ]]; then
-            tmux new-session -d -s "hotspot_control_$$" "bash -c './hotspot.sh -u -q && ./hotspot.sh -q'"
-        else
-            tmux new-session -d -s "hotspot_control_$$" "bash -c './hotspot.sh -u && ./hotspot.sh'"
-        fi
-        
-        while tmux has-session -t "hotspot_control_$$" 2>/dev/null; do
-            sleep 1
-        done
+        systemctl restart hostapd
+        systemctl restart dnsmasq
     fi
 fi
 
 if [[ "$ACTION" == "toggle" ]]; then
     if [[ "$CURRENT_STATE" == "ON" ]]; then
-        echo -e "${BLACK}[ INFO ]${NC} Turning hotspot OFF"
-        if [[ "$QUIET" == "true" ]]; then
-            tmux new-session -d -s "hotspot_control_$$" "./hotspot.sh -u -q"
-        else
-            tmux new-session -d -s "hotspot_control_$$" "./hotspot.sh -u"
-        fi
+        systemctl stop hostapd
+        systemctl stop dnsmasq
+        echo -e "${BLACK}[ INFO ]${NC} Hotspot OFF"
     else
-        echo -e "${BLACK}[ INFO ]${NC} Turning hotspot ON"
-        if [[ "$QUIET" == "true" ]]; then
-            tmux new-session -d -s "hotspot_control_$$" "./hotspot.sh -q"
-        else
-            tmux new-session -d -s "hotspot_control_$$" "./hotspot.sh"
-        fi
+        systemctl start dnsmasq
+        systemctl start hostapd
+        echo -e "${BLACK}[ INFO ]${NC} Hotspot ON"
     fi
 elif [[ "$ACTION" == "on" ]]; then
     if [[ "$CURRENT_STATE" == "ON" ]]; then
         echo -e "${YELLOW}[ WARN ]${NC} Hotspot is already ON"
     else
-        echo -e "${BLACK}[ INFO ]${NC} Turning hotspot ON"
-        if [[ "$QUIET" == "true" ]]; then
-            tmux new-session -d -s "hotspot_control_$$" "./hotspot.sh -q"
-        else
-            tmux new-session -d -s "hotspot_control_$$" "./hotspot.sh"
-        fi
+        systemctl start dnsmasq
+        systemctl start hostapd
+        echo -e "${BLACK}[ INFO ]${NC} Hotspot ON"
     fi
 elif [[ "$ACTION" == "off" ]]; then
     if [[ "$CURRENT_STATE" == "OFF" ]]; then
         echo -e "${YELLOW}[ WARN ]${NC} Hotspot is already OFF"
     else
-        echo -e "${BLACK}[ INFO ]${NC} Turning hotspot OFF"
-        if [[ "$QUIET" == "true" ]]; then
-            tmux new-session -d -s "hotspot_control_$$" "./hotspot.sh -u -q"
-        else
-            tmux new-session -d -s "hotspot_control_$$" "./hotspot.sh -u"
-        fi
+        systemctl stop hostapd
+        systemctl stop dnsmasq
+        echo -e "${BLACK}[ INFO ]${NC} Hotspot OFF"
     fi
 fi
 
-if [[ -n "$ACTION" ]]; then
-    while tmux has-session -t "hotspot_control_$$" 2>/dev/null; do
-        sleep 1
-    done
-fi
-
-if pgrep hostapd &>/dev/null && pgrep dnsmasq &>/dev/null; then
+if systemctl is-active --quiet hostapd && systemctl is-active --quiet dnsmasq; then
     NEW_STATE="ON"
 else
     NEW_STATE="OFF"
 fi
-
-if [[ -f /etc/hostapd/hostapd.conf ]] && grep -q "ht_capab=" /etc/hostapd/hostapd.conf; then
+if grep -q "^ieee80211n=1" "$HOSTAPD_CONF"; then
     NEW_EFFICIENCY="fast"
 else
     NEW_EFFICIENCY="slow"
@@ -197,7 +181,6 @@ fi
 if [[ -n "$ACTION" ]]; then
     echo -e "${GREEN}[  OK  ]${NC} Hotspot state changed: $CURRENT_STATE -> $NEW_STATE"
 fi
-
-if [[ -n "$EFFICIENCY" ]]; then
+if [[ "$EFFICIENCY_CHANGED" == "true" ]]; then
     echo -e "${GREEN}[  OK  ]${NC} Efficiency mode changed: $CURRENT_EFFICIENCY -> $NEW_EFFICIENCY"
 fi
